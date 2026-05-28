@@ -1,5 +1,7 @@
 # Knowledge Wiki Template
 
+> English | [简体中文](README.zh-CN.md) | [繁體中文（台灣）](README.zh-TW.md)
+
 A template for building a personal knowledge wiki powered by AI. Add your own notes and documents; the AI skills maintain an interconnected wiki in `Wiki/` automatically.
 
 ## Setup
@@ -83,7 +85,7 @@ codex mcp add qmd -- qmd mcp
 
 ### 10. Add Your Content
 
-Create any folder structure that fits your needs — for example `Notes/`, `Ideas/`, `Docs/`, `Journals/`. The wiki skills scan all Markdown files in the repo (excluding `Wiki/`, `.claude/`, `README.md`, `AGENTS.md`, and `CLAUDE.md`), so any `.md` file you add becomes eligible for summarization.
+Create any folder structure that fits your needs — for example `Notes/`, `Ideas/`, `Docs/`, `Journals/`. The wiki skills scan all Markdown files in the repo (excluding `Wiki/`, `.claude/`, `README.md` and localized variants, `AGENTS.md`, and `CLAUDE.md`), so any `.md` file you add becomes eligible for summarization.
 
 ### 11. Use the Skills
 
