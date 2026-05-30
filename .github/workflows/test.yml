@@ -1,0 +1,14 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  wiki-index:
+    uses: ./.github/workflows/wiki-index-tests.yml
+
+  wiki-state:
+    uses: ./.github/workflows/wiki-state-tests.yml
