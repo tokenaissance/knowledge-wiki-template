@@ -7,6 +7,8 @@
  * Usage:
  *   node scripts/wiki/wiki-summary.mjs list-stale
  *   node scripts/wiki/wiki-summary.mjs create <source-path> [--at <ISO timestamp>]
+ *   node scripts/wiki/wiki-summary.mjs delete-concept - | <summary-rel-path> <concept-slug>
+ *   node scripts/wiki/wiki-summary.mjs insert-concept - | <summary-rel-path> <concept-slug> <display-name> <description|->
  *
  * Subcommands:
  *   list-stale
@@ -17,6 +19,22 @@
  *       Create (or overwrite) a skeleton summary file for <source-path>
  *       (relative to KNOWLEDGE_DIR). Computes and writes the hash automatically.
  *       Prints the summary file rel-path so the skill knows where to edit.
+ *
+ *   delete-concept - | <summary-rel-path> <concept-slug>
+ *       Remove all Key Concepts bullet entries for <concept-slug> from the summary.
+ *       Pass - as the first argument to read both fields from stdin (one per line)
+ *       inside a single-quoted heredoc — required when the path contains quotes or
+ *       other shell-special characters.
+ *
+ *   insert-concept - | <summary-rel-path> <concept-slug> <display-name> <description|->
+ *       Append "- [[Wiki/Concepts/<slug>|<display-name>]] — <description>" to the
+ *       ## Key Concepts section. Idempotent — no-op if the concept is already a
+ *       bullet entry.
+ *       Pass - as the first argument to read all four fields from stdin (one per
+ *       line); description is everything from line 4 onward, collapsed to one line.
+ *       Pass - as the description (4th positional arg) to read only the description
+ *       from stdin. Both forms use a single-quoted heredoc (<<'EOF') to protect $,
+ *       backticks, and other shell-special characters.
  */
 
 import fs from 'fs';
@@ -24,6 +42,10 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { extractBody } from './wiki-graph-lib.mjs';
+import {
+  insertBulletInSection,
+  deleteBulletFromSection,
+} from './wiki-section-lib.mjs';
 
 process.stdout.on('error', err => { if (err.code === 'EPIPE') process.exit(0); });
 
@@ -162,15 +184,114 @@ function cmdCreate(args) {
   console.log(summaryRel);
 }
 
+function cmdDeleteConcept(args) {
+  let relPath, slug;
+  if (args[0] === '-') {
+    // Read both fields from stdin (one per line) inside a <<'EOF' heredoc,
+    // safe for paths that contain double quotes or other shell-special characters.
+    const lines = fs.readFileSync(0, 'utf8').split('\n').map(l => l.trimEnd());
+    [relPath, slug] = lines;
+  } else {
+    [relPath, slug] = args;
+  }
+  if (!relPath || !slug) {
+    console.error('Usage: node scripts/wiki/wiki-summary.mjs delete-concept - | <summary-rel-path> <concept-slug>');
+    process.exit(1);
+  }
+
+  const summaryFull = path.join(KNOWLEDGE_DIR, relPath);
+  if (!fs.existsSync(summaryFull)) {
+    console.error(`Summary file not found: ${summaryFull}`);
+    process.exit(1);
+  }
+
+  const content = fs.readFileSync(summaryFull, 'utf8');
+  // Match only bullets where slug is the leading (entry) wikilink, not a
+  // secondary mention in the description.
+  const entryRe = /^- \[\[Wiki\/Concepts\/([^\]|]+)(?:\|[^\]]+)?\]\]/;
+  const { content: updated, found } = deleteBulletFromSection(
+    content, 'Key Concepts',
+    line => { const m = entryRe.exec(line); return m !== null && m[1] === slug; },
+  );
+
+  if (!found) {
+    console.log(`Not found in ${relPath}: ${slug}`);
+    return;
+  }
+
+  fs.writeFileSync(summaryFull, updated, 'utf8');
+  console.log(`Deleted concept from ${relPath}: ${slug}`);
+}
+
+function cmdInsertConcept(args) {
+  let relPath, slug, displayName, description;
+
+  if (args[0] === '-') {
+    // All four fields from stdin (one per line) inside a <<'EOF' heredoc,
+    // safe for paths/names that contain double quotes or shell-special chars.
+    // Description is everything from line 4 onward, collapsed to one line.
+    const lines = fs.readFileSync(0, 'utf8').split('\n').map(l => l.trimEnd());
+    relPath = lines[0];
+    slug = lines[1];
+    displayName = lines[2];
+    description = lines.slice(3).filter(Boolean).join(' ').trim();
+  } else {
+    [relPath, slug, displayName] = args;
+    const rawDescription = args[3];
+    // Pass '-' as description to read only it from stdin via <<'EOF'.
+    description = rawDescription === '-'
+      ? fs.readFileSync(0, 'utf8').replace(/\r?\n/g, ' ').trim()
+      : rawDescription;
+  }
+
+  if (!relPath || !slug || !displayName || !description) {
+    console.error('Usage: node scripts/wiki/wiki-summary.mjs insert-concept - | <summary-rel-path> <concept-slug> <display-name> <description|->\n  Use - as first arg to read all fields from stdin; or pass - as 4th arg to read only the description.');
+    process.exit(1);
+  }
+
+  const summaryFull = path.join(KNOWLEDGE_DIR, relPath);
+  if (!fs.existsSync(summaryFull)) {
+    console.error(`Summary file not found: ${summaryFull}`);
+    process.exit(1);
+  }
+
+  const content = fs.readFileSync(summaryFull, 'utf8');
+
+  // Idempotency: check only bullet entries (leading wikilink), not prose lines.
+  const entryRe = /^- \[\[Wiki\/Concepts\/([^\]|]+)(?:\|[^\]]+)?\]\]/;
+  let inKeyC = false;
+  let alreadyPresent = false;
+  for (const line of content.split('\n')) {
+    if (line === '## Key Concepts') { inKeyC = true; continue; }
+    if (inKeyC && line.startsWith('## ')) break;
+    if (!inKeyC) continue;
+    const m = entryRe.exec(line);
+    if (m && m[1] === slug) { alreadyPresent = true; break; }
+  }
+
+  if (alreadyPresent) {
+    console.log(`Already present in ${relPath}: ${slug}`);
+    return;
+  }
+
+  const bullet = `- [[Wiki/Concepts/${slug}|${displayName}]] — ${description}`;
+  const updated = insertBulletInSection(content, 'Key Concepts', bullet);
+  fs.writeFileSync(summaryFull, updated, 'utf8');
+  console.log(`Inserted concept into ${relPath}: ${slug}`);
+}
+
+
 // --- Dispatch ---
 
 const [,, subcommand, ...rest] = process.argv;
 
 switch (subcommand) {
-  case 'list-stale':   cmdListStale(); break;
-  case 'create':       cmdCreate(rest); break;
+  case 'list-stale':      cmdListStale(); break;
+  case 'create':          cmdCreate(rest); break;
+  case 'delete-concept':  cmdDeleteConcept(rest); break;
+  case 'insert-concept':  cmdInsertConcept(rest); break;
   default:
     console.error(`Unknown subcommand: ${subcommand}`);
-    console.error('Subcommands: list-stale, create');
+    console.error('Subcommands: list-stale, create, delete-concept, insert-concept');
     process.exit(1);
 }
