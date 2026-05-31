@@ -29,7 +29,8 @@
  * dismiss-cluster-parent adds an implied-parent slug to the dismissed list so it is
  *   never shown again by knowledge-wiki-cluster.
  * prune-cluster-parents removes dismissed parent slugs whose concept file now
- *   exists on disk (cluster was resolved). Prints the count of removed entries.
+ *   exists on disk (cluster was resolved), or whose descendant concepts ({slug}-*.md)
+ *   are all gone. Prints the count of removed entries.
  */
 
 import fs from 'fs';
@@ -184,8 +185,15 @@ if (subcommand === 'find-unprocessed-summaries') {
   const kept = [];
   let removedCount = 0;
 
+  const conceptsDir = path.join(KNOWLEDGE_DIR, 'Wiki', 'Concepts');
+  const allConcepts = fs.existsSync(conceptsDir)
+    ? new Set(fs.readdirSync(conceptsDir).filter(f => f.endsWith('.md')))
+    : new Set();
+
   for (const slug of parents) {
-    if (fs.existsSync(path.join(KNOWLEDGE_DIR, 'Wiki', 'Concepts', `${slug}.md`))) {
+    const parentFileExists = allConcepts.has(`${slug}.md`);
+    const hasDescendants = [...allConcepts].some(f => f.startsWith(`${slug}-`) && f.endsWith('.md'));
+    if (parentFileExists || !hasDescendants) {
       removedCount++;
     } else {
       kept.push(slug);
